@@ -1,6 +1,6 @@
 *PPD-Adobe: "4.3"
 *FormatVersion: "4.3"
-*FileVersion: "1.1.0"
+*FileVersion: "1.2.0"
 *LanguageVersion: English
 *LanguageEncoding: ISOLatin1
 *PCFileName: "IP100NAT.PPD"
@@ -24,7 +24,6 @@
 *DefaultOutputOrder: Reverse
 *cupsFilter2: "application/vnd.cups-raster application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
 *cupsFilter2: "application/vnd.cups-command application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
-*cupsCommands: "ReportLevels"
 *cupsLanguages: "en"
 
 *OpenUI *ColorModel/Color Mode: PickOne
@@ -39,10 +38,25 @@
 *OpenUI *PrintQuality/Print Quality: PickOne
 *OrderDependency: 10 AnySetup *PrintQuality
 *DefaultPrintQuality: Standard
-*PrintQuality Standard/Standard (600 dpi): "<</HWResolution[600 600]>>setpagedevice"
-*PrintQuality Draft/Draft (300 dpi): "<</HWResolution[300 300]>>setpagedevice"
-*PrintQuality Fast/Fast (300 dpi, quickest): "<</HWResolution[300 300]>>setpagedevice"
+*PrintQuality High/Super Fine (plain paper): "<</HWResolution[600 600]/OutputType(High)>>setpagedevice"
+*PrintQuality Standard/Standard (600 dpi): "<</HWResolution[600 600]/OutputType(Standard)>>setpagedevice"
+*PrintQuality Draft/Draft (300 dpi): "<</HWResolution[300 300]/OutputType(Draft)>>setpagedevice"
+*PrintQuality Fast/Fast (300 dpi, quickest): "<</HWResolution[300 300]/OutputType(Fast)>>setpagedevice"
 *CloseUI: *PrintQuality
+
+*OpenUI *MediaType/Paper Type: PickOne
+*OrderDependency: 10 AnySetup *MediaType
+*DefaultMediaType: Plain
+*MediaType Plain/Plain Paper: "<</MediaType(Plain)>>setpagedevice"
+*MediaType PhotoPro/Photo Paper Pro: "<</MediaType(PhotoPro)>>setpagedevice"
+*MediaType PhotoPlusGlossyII/Photo Paper Plus Glossy II: "<</MediaType(PhotoPlusGlossyII)>>setpagedevice"
+*MediaType PhotoPlusGlossy/Photo Paper Plus Glossy: "<</MediaType(PhotoPlusGlossy)>>setpagedevice"
+*MediaType PhotoPlusSemiGloss/Photo Paper Plus Semi-gloss: "<</MediaType(PhotoPlusSemiGloss)>>setpagedevice"
+*MediaType GlossyPhoto/Glossy Photo Paper: "<</MediaType(GlossyPhoto)>>setpagedevice"
+*MediaType Matte/Matte Photo Paper: "<</MediaType(Matte)>>setpagedevice"
+*MediaType HighRes/High Resolution Paper: "<</MediaType(HighRes)>>setpagedevice"
+*MediaType Envelope/Envelope: "<</MediaType(Envelope)>>setpagedevice"
+*CloseUI: *MediaType
 
 *OpenUI *InkDensity/Ink Density: PickOne
 *OrderDependency: 20 AnySetup *InkDensity
@@ -65,6 +79,11 @@
 *PageSize 5x7/5 x 7 in: "<</PageSize[360 504]/ImagingBBox null>>setpagedevice"
 *PageSize 8x10/8 x 10 in: "<</PageSize[576 720]/ImagingBBox null>>setpagedevice"
 *PageSize Env10/Envelope #10: "<</PageSize[297 684]/ImagingBBox null>>setpagedevice"
+*PageSize Letter.FullBleed/US Letter (Borderless): "<</PageSize[612 792]/ImagingBBox null>>setpagedevice"
+*PageSize A4.FullBleed/A4 (Borderless): "<</PageSize[595.32 841.92]/ImagingBBox null>>setpagedevice"
+*PageSize 4x6.FullBleed/4 x 6 in (Borderless): "<</PageSize[288 432]/ImagingBBox null>>setpagedevice"
+*PageSize 5x7.FullBleed/5 x 7 in (Borderless): "<</PageSize[360 504]/ImagingBBox null>>setpagedevice"
+*PageSize 8x10.FullBleed/8 x 10 in (Borderless): "<</PageSize[576 720]/ImagingBBox null>>setpagedevice"
 *CloseUI: *PageSize
 
 *OpenUI *PageRegion/Media Size: PickOne
@@ -79,6 +98,11 @@
 *PageRegion 5x7/5 x 7 in: "<</PageSize[360 504]/ImagingBBox null>>setpagedevice"
 *PageRegion 8x10/8 x 10 in: "<</PageSize[576 720]/ImagingBBox null>>setpagedevice"
 *PageRegion Env10/Envelope #10: "<</PageSize[297 684]/ImagingBBox null>>setpagedevice"
+*PageRegion Letter.FullBleed/US Letter (Borderless): "<</PageSize[612 792]/ImagingBBox null>>setpagedevice"
+*PageRegion A4.FullBleed/A4 (Borderless): "<</PageSize[595.32 841.92]/ImagingBBox null>>setpagedevice"
+*PageRegion 4x6.FullBleed/4 x 6 in (Borderless): "<</PageSize[288 432]/ImagingBBox null>>setpagedevice"
+*PageRegion 5x7.FullBleed/5 x 7 in (Borderless): "<</PageSize[360 504]/ImagingBBox null>>setpagedevice"
+*PageRegion 8x10.FullBleed/8 x 10 in (Borderless): "<</PageSize[576 720]/ImagingBBox null>>setpagedevice"
 *CloseUI: *PageRegion
 
 *% Custom sizes: 54x86 mm up to 8.5x14 in; Canon margins (left/right 80, top 70, bottom 118 dots at 600 dpi)
@@ -103,6 +127,11 @@
 *ImageableArea 5x7/5 x 7 in: "9.6 14.16 350.4 495.6"
 *ImageableArea 8x10/8 x 10 in: "9.6 14.16 566.4 711.6"
 *ImageableArea Env10/Envelope #10: "9.6 75.12 287.4 675.6"
+*ImageableArea Letter.FullBleed/US Letter (Borderless): "0 0 612 792"
+*ImageableArea A4.FullBleed/A4 (Borderless): "0 0 595.32 841.92"
+*ImageableArea 4x6.FullBleed/4 x 6 in (Borderless): "0 0 288 432"
+*ImageableArea 5x7.FullBleed/5 x 7 in (Borderless): "0 0 360 504"
+*ImageableArea 8x10.FullBleed/8 x 10 in (Borderless): "0 0 576 720"
 
 *DefaultPaperDimension: Letter
 *PaperDimension Letter/US Letter: "612 792"
@@ -114,6 +143,81 @@
 *PaperDimension 5x7/5 x 7 in: "360 504"
 *PaperDimension 8x10/8 x 10 in: "576 720"
 *PaperDimension Env10/Envelope #10: "297 684"
+*PaperDimension Letter.FullBleed/US Letter (Borderless): "612 792"
+*PaperDimension A4.FullBleed/A4 (Borderless): "595.32 841.92"
+*PaperDimension 4x6.FullBleed/4 x 6 in (Borderless): "288 432"
+*PaperDimension 5x7.FullBleed/5 x 7 in (Borderless): "360 504"
+*PaperDimension 8x10.FullBleed/8 x 10 in (Borderless): "576 720"
+
+*% Super Fine, Draft and Fast are plain-paper qualities; borderless needs a photo paper type
+*UIConstraints: *MediaType PhotoPro *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType PhotoPro
+*UIConstraints: *MediaType PhotoPro *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType PhotoPro
+*UIConstraints: *MediaType PhotoPro *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType PhotoPro
+*UIConstraints: *MediaType PhotoPlusGlossyII *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType PhotoPlusGlossyII
+*UIConstraints: *MediaType PhotoPlusGlossyII *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType PhotoPlusGlossyII
+*UIConstraints: *MediaType PhotoPlusGlossyII *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType PhotoPlusGlossyII
+*UIConstraints: *MediaType PhotoPlusGlossy *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType PhotoPlusGlossy
+*UIConstraints: *MediaType PhotoPlusGlossy *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType PhotoPlusGlossy
+*UIConstraints: *MediaType PhotoPlusGlossy *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType PhotoPlusGlossy
+*UIConstraints: *MediaType PhotoPlusSemiGloss *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType PhotoPlusSemiGloss
+*UIConstraints: *MediaType PhotoPlusSemiGloss *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType PhotoPlusSemiGloss
+*UIConstraints: *MediaType PhotoPlusSemiGloss *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType PhotoPlusSemiGloss
+*UIConstraints: *MediaType GlossyPhoto *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType GlossyPhoto
+*UIConstraints: *MediaType GlossyPhoto *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType GlossyPhoto
+*UIConstraints: *MediaType GlossyPhoto *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType GlossyPhoto
+*UIConstraints: *MediaType Matte *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType Matte
+*UIConstraints: *MediaType Matte *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType Matte
+*UIConstraints: *MediaType Matte *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType Matte
+*UIConstraints: *MediaType HighRes *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType HighRes
+*UIConstraints: *MediaType HighRes *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType HighRes
+*UIConstraints: *MediaType HighRes *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType HighRes
+*UIConstraints: *MediaType Envelope *PrintQuality High
+*UIConstraints: *PrintQuality High *MediaType Envelope
+*UIConstraints: *MediaType Envelope *PrintQuality Draft
+*UIConstraints: *PrintQuality Draft *MediaType Envelope
+*UIConstraints: *MediaType Envelope *PrintQuality Fast
+*UIConstraints: *PrintQuality Fast *MediaType Envelope
+*UIConstraints: *MediaType Plain *PageSize Letter.FullBleed
+*UIConstraints: *PageSize Letter.FullBleed *MediaType Plain
+*UIConstraints: *MediaType Envelope *PageSize Letter.FullBleed
+*UIConstraints: *PageSize Letter.FullBleed *MediaType Envelope
+*UIConstraints: *MediaType Plain *PageSize A4.FullBleed
+*UIConstraints: *PageSize A4.FullBleed *MediaType Plain
+*UIConstraints: *MediaType Envelope *PageSize A4.FullBleed
+*UIConstraints: *PageSize A4.FullBleed *MediaType Envelope
+*UIConstraints: *MediaType Plain *PageSize 4x6.FullBleed
+*UIConstraints: *PageSize 4x6.FullBleed *MediaType Plain
+*UIConstraints: *MediaType Envelope *PageSize 4x6.FullBleed
+*UIConstraints: *PageSize 4x6.FullBleed *MediaType Envelope
+*UIConstraints: *MediaType Plain *PageSize 5x7.FullBleed
+*UIConstraints: *PageSize 5x7.FullBleed *MediaType Plain
+*UIConstraints: *MediaType Envelope *PageSize 5x7.FullBleed
+*UIConstraints: *PageSize 5x7.FullBleed *MediaType Envelope
+*UIConstraints: *MediaType Plain *PageSize 8x10.FullBleed
+*UIConstraints: *PageSize 8x10.FullBleed *MediaType Plain
+*UIConstraints: *MediaType Envelope *PageSize 8x10.FullBleed
+*UIConstraints: *PageSize 8x10.FullBleed *MediaType Envelope
 
 *DefaultFont: Courier
 *Font Courier: Standard "(002.004S)" Standard ROM

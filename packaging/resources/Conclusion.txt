@@ -1,10 +1,13 @@
 The driver is installed.
 
+If Canon's original iP100 driver is installed, remove it first (see "Removing Canon's old driver" on the project's GitHub page); otherwise macOS may keep choosing it or showing its settings.
+
 To add your printer:
   1. Connect the iP100 by USB and turn it on.
   2. Open System Settings > Printers & Scanners and click Add Printer, Scanner, or Fax.
   3. Select the iP100, then under "Use" choose "Select Software..." and pick "Canon iP100 Native (unofficial driver)".
   4. Click Add.
+If an iP100 printer was already set up, remove it and add it again this way. Print options are in the print dialog under Printer Options > Printer Features; the first time, they can take a few seconds to appear.
 
 If colours print with bands or gaps, the print head needs cleaning. With plain paper loaded:
   - To print a nozzle check page, hold the printer's RESUME/CANCEL button until the power light flashes twice, then release.

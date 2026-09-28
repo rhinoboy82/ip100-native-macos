@@ -3,7 +3,9 @@ iP100 Native Driver (unofficial)
 This installs a native macOS printer driver for the Canon PIXMA iP100, for Macs with Apple Silicon or Intel processors. It does not need Rosetta or Canon's original driver.
 
 What it supports:
-  - Plain paper, colour and black-and-white, Standard (600 dpi), Draft and Fast (300 dpi)
+  - Plain paper, colour and black-and-white: Super Fine, Standard, Draft and Fast
+  - Photo papers (Pro, Plus Glossy II, Plus Glossy, Plus Semi-gloss, Glossy, Matte, High Resolution) and envelopes
+  - Borderless printing on photo papers
   - Letter, Legal, A4, A5, B5, 4x6, 5x7, 8x10, #10 envelope and custom sizes
   - Ink levels in System Settings
   - USB connection

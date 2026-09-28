@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Build an RGB -> CMYK ink lookup table from Canon ink measurements.
 
-Usage: buildlut.py MODE [--check]      (MODE = plain | draft)
+Usage: buildlut.py MODE [--check]
+  MODE = plain | draft | superfine | envelope | glossy | pro | glossy2 | matte
 Input:  data/MODE_model.json, data/MODE_blend.json, data/MODE_samples.json
         (made by tools/measure.py from Canon's output for test/color_test.pdf)
-Output: src/ip100_MODE_lut.h — 17x17x17 table of ink amounts in 1/1000 drop per dot.
-        plain: C/M up to 2000 (two drops), Y/K up to 1000.  draft: all up to 1000.
+Output: src/ip100_MODE_lut.h — 17x17x17 table in 1/1000 units per dot:
+        plain: drops (C/M up to 2, Y/K up to 1); draft: drops (all up to 1);
+        multi-level modes: mean ink level (C/M up to 5, Y up to 3, k up to 3, K up to 1).
 """
 import colorsys
 import json
@@ -29,8 +31,9 @@ class Model:
         self.grid, self.grey = m["grid"], m["grey"]
         self.samples = [(tuple(c), a) for c, a in json.load(open(os.path.join(DATA, f"{mode}_samples.json")))]
         self.blend = [(tuple(c), a) for c, a in json.load(open(os.path.join(DATA, f"{mode}_blend.json")))]
-        # Pure black: Canon uses black ink only (patch 4 of the test page).
-        self.black = [0.0, 0.0, 0.0, round(self.samples[3][1][3], 2)]
+        # Pure black as Canon prints it (patch 4 of the test page): black ink only on plain
+        # paper, rich black (C+M+dye black) on photo papers.
+        self.black = [round(v, 2) for v in self.samples[3][1]]
         self.residuals = None
 
     def grey_ink(self, v):

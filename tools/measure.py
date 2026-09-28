@@ -7,7 +7,8 @@ OUT_PREFIX_samples.json, the inputs for tools/buildlut.py.
 
 TEST_IMAGE.ppm is the 150 dpi source image of color_test.pdf (1275 x 1650). Coordinates below
 are in that image's pixels; the capture's resolution (600 or 300 dpi) is read from its ESC (d.
-Ink amounts are in drops per dot at the capture's resolution.
+Ink amounts are in drops per dot at the capture's resolution; for multi-level modes (photo
+papers, Super Fine, envelope) they are the mean ink level per dot (C/M 0-5, Y 0-3, k 0-3, K 0-1).
 """
 import colorsys
 import json
@@ -16,6 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from colordecode import decode  # noqa: E402
+from photolevels import LevelPage  # noqa: E402
 
 T = [[(b // 81) % 3, (b // 27) % 3, (b // 9) % 3, (b // 3) % 3, b % 3] for b in range(256)]
 
@@ -57,8 +59,31 @@ class Capture:
         return out
 
 
+class LevelCapture:
+    """Same interface as Capture, for multi-level captures (split C/M/k channels)."""
+
+    def __init__(self, path):
+        self.p = LevelPage(path)
+        self.d = self.p.d
+        self.inks = self.p.inks  # C, M, Y, k|K
+
+    def amount(self, x0, y0, x1, y1):
+        X0, X1, Y0, Y1 = 4 * x0 - 151, 4 * x1 - 151, 4 * y0 - 70, 4 * y1 - 70
+        out = []
+        for ink in self.inks:
+            tot = n = 0
+            for y in range(Y0, Y1, 2):
+                row = self.p.levels(ink, y)
+                seg = row[X0:X1:2]
+                tot += sum(max(v, 0) for v in seg)
+                n += len(range(X0, X1, 2))
+            out.append(tot / n if n else 0.0)
+        return out
+
+
 def main():
-    cap = Capture(sys.argv[1])
+    d0 = decode(sys.argv[1])
+    cap = LevelCapture(sys.argv[1]) if 0x83 in d0["inks"] else Capture(sys.argv[1])
     raw = open(sys.argv[2], "rb").read()
     px = raw[raw.index(b"255\n") + 4:]
     W = 1275
@@ -105,7 +130,7 @@ def main():
             blend.append([[round(v) for v in rgb_avg(x, y, 3)], cap.amount(x - 5, y - 5, x + 5, y + 5)])
     json.dump(blend, open(prefix + "_blend.json", "w"))
     print(f"{prefix}: {len(samples)} samples, {NH * NL} grid points, {len(blend)} blend points; "
-          f"inks {''.join(cap.inks)} at {cap.d['res'][0]} dpi")
+          f"inks {''.join(cap.inks)} at {cap.d['res'][0]} dpi{' (multi-level)' if isinstance(cap, LevelCapture) else ''}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@ driver (v3.x). Multi-byte values are big-endian unless noted; `ESC (x` commands 
    `BJLSTART\nCONTROLMODE=COMMON\nSETSILENT=OFF\nBJLEND\n`.
 3. `ESC [K` body `00 0f`.
 4. Pages.
-5. `ESC (b 00`, then `ESC [K` body `00 1e 00 09` + `SSR=DF;`.
+5. `ESC (b 00`, `ESC @` (reset), then `ESC [K` body `00 1e 00 09` + `SSR=DF;`. Without the
+   `ESC @` the printer can stay in "receiving job" state (power light flashing) afterwards.
 
 Pages are sent **last page first** (the printer stacks face-up).
 
@@ -82,10 +83,37 @@ status through Canon's own USB class driver, which is Intel-only and cannot load
 so the commands could not be captured. `@TestPrint=NozzleCheck` in a BJL block (the format often cited for Canon inkjets) did
 **not** work on the iP100 and left it waiting for data until power-cycled — don't send it.
 
-## Not yet implemented (observed)
+## Multi-level modes (photo papers, Super Fine, envelope)
 
-- Super Fine quality and envelope media: 8 channels `43 4d 59 4b 83 8d c3 cd`, C/M/Y 2 bits per dot (`02 00 04`).
-- Photo papers: `(c 30 0b 03`, `(L` with nine channels `43 4d 59 6b 83 8d ab c3 cd`, different `(t`.
+Each dot has several ink levels, split across extra channels whose `(L` codes are the ink letter
+plus `0x40` / `0x80`:
+
+| Mode | `(L` channels | `(c` | `(l` |
+| --- | --- | --- | --- |
+| Super Fine (plain) | `C M Y K 83 8d c3 cd` | `30 00 04` | `34 00` |
+| Envelope | `C M Y K 83 8d c3 cd` | `30 08 03` | `34 08` |
+| Photo papers | `C M Y k 83 8d ab c3 cd` | `30 <media> 03` | `34 <media2>` |
+
+Photo media codes (`(c` / `(l`): Pro `09/0d`, Plus Glossy II `1d/23`, Plus Glossy `0b/11`,
+Plus Semi-gloss `1a/1f`, Glossy `05/05`, Matte `0a/10`, High Resolution `07/07`.
+Canon uses the same ink table for Plus Glossy, Semi-gloss and Glossy, and for Matte and High
+Resolution. `(t` values per mode are in `src/rastertoip100.c`.
+
+Per-dot level codes:
+
+- **C, M** — six levels, as (main 2-bit, `+0x40` bit, `+0x80` bit):
+  1 = (0,0,1), 2 = (0,1,1), 3 = (1,1,0), 4 = (2,1,0), 5 = (3,1,0)
+- **Y** — 2-bit value, levels 0–3
+- **k** (dye black, photo papers) — (main ternary, `+0x40` bit): 1 = (0,1), 2 = (1,1), 3 = (2,1)
+- **K** (pigment black, Super Fine / envelope) — 1 bit
+
+2-bit channels pack four dots per byte, first dot in the top two bits. Canon mixes neighbouring
+levels (multi-level halftoning). On photo paper pure black is rich black (C, M and k).
+
+## Borderless (photo papers)
+
+`(p` with the first fields 0, left and top −47, area = paper + 119 dots wide and + 166 dots tall;
+the page image is scaled up to fill it.
 
 ## Printer status
 

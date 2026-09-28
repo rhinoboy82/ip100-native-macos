@@ -1,10 +1,12 @@
 /*
- * rastertoip100 - native CUPS filter for the Canon PIXMA iP100 (plain paper, 600/300 dpi).
+ * rastertoip100 - native CUPS filter for the Canon PIXMA iP100.
  *
  * Reads 8-bit RGB or grayscale CUPS raster and writes the Canon command stream that
  * Canon's own (Intel-only) Mac driver produces. Command sequence, page geometry and
- * the RGB -> CMYK ink table were derived from that driver's output; see ref/ and tools/.
- * Pages with no colour are printed with black ink only, as Canon's driver does.
+ * the RGB -> ink tables were derived from that driver's output; see docs/ and tools/.
+ * Plain paper (standard, draft, fast, super fine), envelopes and photo papers, with
+ * borderless printing on photo papers. On plain paper, pages with no colour are printed
+ * with black ink only, as Canon's driver does.
  * Also reports ink levels from the printer's status replies (after each job, and for the
  * CUPS "ReportLevels" command).
  *
@@ -27,8 +29,14 @@
 
 #include "ip100_plain_lut.h"
 #include "ip100_draft_lut.h"
+#include "ip100_superfine_lut.h"
+#include "ip100_envelope_lut.h"
+#include "ip100_glossy_lut.h"
+#include "ip100_glossy2_lut.h"
+#include "ip100_pro_lut.h"
+#include "ip100_matte_lut.h"
 
-#define IP100_VERSION   "1.1.0"
+#define IP100_VERSION   "1.2.0"
 #define DPI             600
 #define LINES_PER_BLOCK 16 /* 600 dpi; draft (300 dpi) uses 8 */
 #define MAX_WIDTH_DOTS  4800 /* 8 inch print head sweep */
@@ -40,18 +48,19 @@ typedef struct {
   int left, top;          /* printable area origin */
   int area_w, area_h;     /* printable area size */
   int flag;               /* 7 for Letter/Legal (area narrower than paper), else 0 */
+  int borderless;         /* image extends past the paper edges (photo papers only) */
 } geometry_t;
 
 static const geometry_t geometries[] = {
-  { "Letter", 5100, 6600, 151, 70, 4800, 6412, 7 },
-  { "Legal",  5100, 8400, 151, 70, 4800, 8212, 7 },
-  { "A4",     4961, 7016,  80, 70, 4800, 6827, 0 },
-  { "A5",     3497, 4961,  80, 70, 3336, 4772, 0 },
-  { "B5",     4300, 6071,  80, 70, 4139, 5882, 0 },
-  { "4x6",    2400, 3600,  80, 70, 2240, 3412, 0 },
-  { "5x7",    3000, 4200,  80, 70, 2840, 4012, 0 },
-  { "8x10",   4800, 6000,  80, 70, 4640, 5812, 0 },
-  { "Env10",  2475, 5700,  80, 70, 2315, 5004, 0 },
+  { "Letter", 5100, 6600, 151, 70, 4800, 6412, 7, 0 },
+  { "Legal",  5100, 8400, 151, 70, 4800, 8212, 7, 0 },
+  { "A4",     4961, 7016,  80, 70, 4800, 6827, 0, 0 },
+  { "A5",     3497, 4961,  80, 70, 3336, 4772, 0, 0 },
+  { "B5",     4300, 6071,  80, 70, 4139, 5882, 0, 0 },
+  { "4x6",    2400, 3600,  80, 70, 2240, 3412, 0, 0 },
+  { "5x7",    3000, 4200,  80, 70, 2840, 4012, 0, 0 },
+  { "8x10",   4800, 6000,  80, 70, 4640, 5812, 0, 0 },
+  { "Env10",  2475, 5700,  80, 70, 2315, 5004, 0, 0 },
 };
 
 /* ---------- growable output buffer (one page is buffered so the last-page flag can be set) ---------- */
@@ -160,6 +169,7 @@ static void job_end(void)
 
 static char status_buf[4096];
 static size_t status_len = 0;
+static int have_backchannel = 0; /* fd 3 open at startup (always true under CUPS) */
 
 /* Pass the printer's ink levels (CIR:CL=nnn,BK=nnn) and low-ink flags (CTK) to CUPS. */
 static int report_levels(void)
@@ -201,6 +211,8 @@ static void read_status(double timeout)
 {
   char chunk[1024];
   struct timeval start, now;
+  if (!have_backchannel)
+    return;
   gettimeofday(&start, NULL);
   for (;;) {
     struct pollfd pfd = { 3, POLLIN, 0 };
@@ -235,15 +247,7 @@ static void read_status(double timeout)
 
 /* ---------- maintenance commands (CUPS command files) ---------- */
 
-static void send_status_request(void)
-{
-  static const char req[] = "\x00\x1e\x00" "BSSR=DJS,DBS,DWS,DOC,DSC,BST,PID,CHD,OPT,LVR,CIR,CTK,AOF,HRI,MSI;";
-  unsigned char hdr[5] = { 0x1b, '[', 'K', sizeof(req) - 1, 0 };
-  write_all(hdr, 5);
-  write_all(req, sizeof(req) - 1);
-}
-
-/* Handles "ReportLevels". */
+/* Handles CUPS command files; only "ReportLevels" is recognised, and it is ignored (see below). */
 static int run_commands(int fd)
 {
   FILE *f = fdopen(fd, "r");
@@ -262,14 +266,10 @@ static int run_commands(int fd)
        expects is unknown, and guessed ones left it waiting for data. Use the printer's
        RESUME/CANCEL button instead. */
     if (!strncasecmp(line, "ReportLevels", 12)) {
-      fputs("INFO: Reading ink levels\n", stderr);
-      /* The request starts a continuous status stream; SSR=DF (as at job end) stops it,
-         otherwise the backend keeps waiting and the queue stays busy. */
-      send_status_request();
-      read_status(5.0);
-      job_end();
-      if (!report_levels())
-        fputs("WARNING: The printer did not report ink levels\n", stderr);
+      /* Deliberately a no-op: a status request outside a print job leaves the iP100 waiting
+         for a job (power light flashing) until it is switched off. Ink levels are reported
+         at the end of every print job instead. (PPDs from 1.1/1.2 advertised this command.) */
+      fputs("DEBUG: ReportLevels ignored; ink levels are updated after each print job\n", stderr);
     } else {
       fprintf(stderr, "WARNING: Unsupported command \"%s\"\n", line);
       ok = 0;
@@ -279,43 +279,129 @@ static int run_commands(int fd)
   return ok ? 0 : 1;
 }
 
-/* Print quality: standard = 600 dpi, C/M up to two drops; draft = 300 dpi, one drop per dot.
-   Canon's two draft settings send identical data and differ only in the ESC (c speed byte. */
-typedef enum { Q_STANDARD, Q_DRAFT, Q_FAST } quality_t;
+/* ---------- print modes ---------- */
+
+/* How one ESC (L data channel is derived from a logical ink's per-dot level. */
+enum { P_BIT = 1, P_2BIT = 2, P_TERN = 3 }; /* 8, 4 or 5 dots per byte */
+
+typedef struct {
+  unsigned char code; /* ESC (L channel byte */
+  int src;            /* logical ink: 0 C, 1 M, 2 Y, 3 K/k */
+  int kind;
+  unsigned char map[6]; /* level -> value written for this channel */
+} plane_t;
+
+typedef struct {
+  const char *name;
+  int sc;                       /* 1 = 600 dpi, 2 = 300 dpi */
+  unsigned char t[15];          /* ESC (t (first 15 bytes; rest zero) */
+  unsigned char c2;             /* ESC (c 30 <media> <c2> */
+  int maxlevel[4];              /* per logical ink C, M, Y, K/k */
+  int nplanes;
+  plane_t planes[9];
+  const unsigned short (*lut)[4];
+  int mono_pages;               /* send pages without colour as black only (plain paper) */
+} printmode_t;
+
+/* Canon's per-dot level codes for split channels (see docs/PROTOCOL.md). */
+#define CM_MAIN  { 0, 0, 0, 1, 2, 3 }
+#define CM_40    { 0, 0, 1, 1, 1, 1 }
+#define CM_80    { 0, 1, 1, 0, 0, 0 }
+#define ID       { 0, 1, 2, 3, 4, 5 }
+
+static const printmode_t mode_standard = { "standard", 1,
+  { 0x80, 0x80, 0x01, 0x22, 0x00, 0x03, 0x22, 0x00, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02 }, 0x03,
+  { 2, 2, 1, 1 }, 4,
+  { { 'C', 0, P_TERN, ID }, { 'M', 1, P_TERN, ID }, { 'Y', 2, P_BIT, ID }, { 'K', 3, P_BIT, ID } },
+  ip100_plain_lut, 1 };
+
+static const printmode_t mode_draft = { "draft", 2,
+  { 0x80, 0x00, 0x01, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02 }, 0x01,
+  { 1, 1, 1, 1 }, 4,
+  { { 'C', 0, P_BIT, ID }, { 'M', 1, P_BIT, ID }, { 'Y', 2, P_BIT, ID }, { 'K', 3, P_BIT, ID } },
+  ip100_draft_lut, 1 };
+
+/* Super Fine plain paper and envelopes: C/M six levels, Y four, pigment black 1 bit. */
+#define SF_T { 0x80, 0x80, 0x01, 0x02, 0x00, 0x04, 0x02, 0x00, 0x04, 0x02, 0x00, 0x04, 0x01, 0x00, 0x02 }
+#define SF_PLANES { { 'C', 0, P_2BIT, CM_MAIN }, { 'M', 1, P_2BIT, CM_MAIN }, { 'Y', 2, P_2BIT, ID }, \
+    { 'K', 3, P_BIT, ID }, { 0x83, 0, P_BIT, CM_40 }, { 0x8d, 1, P_BIT, CM_40 }, \
+    { 0xc3, 0, P_BIT, CM_80 }, { 0xcd, 1, P_BIT, CM_80 } }
+static const printmode_t mode_superfine = { "super fine", 1, SF_T, 0x04, { 5, 5, 3, 1 }, 8, SF_PLANES, ip100_superfine_lut, 0 };
+static const printmode_t mode_envelope = { "envelope", 1, SF_T, 0x03, { 5, 5, 3, 1 }, 8, SF_PLANES, ip100_envelope_lut, 0 };
+
+/* Photo papers: C/M six levels, Y four, dye black (k) four. */
+#define PH_T { 0x80, 0x80, 0x01, 0x02, 0x00, 0x04, 0x02, 0x00, 0x04, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00 }
+#define PH_PLANES { { 'C', 0, P_2BIT, CM_MAIN }, { 'M', 1, P_2BIT, CM_MAIN }, { 'Y', 2, P_2BIT, ID }, \
+    { 'k', 3, P_TERN, { 0, 0, 1, 2 } }, { 0x83, 0, P_BIT, CM_40 }, { 0x8d, 1, P_BIT, CM_40 }, \
+    { 0xab, 3, P_BIT, { 0, 1, 1, 1 } }, { 0xc3, 0, P_BIT, CM_80 }, { 0xcd, 1, P_BIT, CM_80 } }
+static const printmode_t mode_glossy = { "photo glossy", 1, PH_T, 0x03, { 5, 5, 3, 3 }, 9, PH_PLANES, ip100_glossy_lut, 0 };
+static const printmode_t mode_glossy2 = { "photo glossy II", 1, PH_T, 0x03, { 5, 5, 3, 3 }, 9, PH_PLANES, ip100_glossy2_lut, 0 };
+static const printmode_t mode_pro = { "photo pro", 1, PH_T, 0x03, { 5, 5, 3, 3 }, 9, PH_PLANES, ip100_pro_lut, 0 };
+static const printmode_t mode_matte = { "photo matte", 1, PH_T, 0x03, { 5, 5, 3, 3 }, 9, PH_PLANES, ip100_matte_lut, 0 };
+
+/* The rest of the photo-mode ESC (t (bytes 15..35). */
+static const unsigned char photo_t_tail[21] = { 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x22, 0x00, 0x03,
+                                                0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02 };
+static const unsigned char sf_t_tail[21] = { 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                             0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00 };
+
+/* Media types (PPD MediaType) with Canon's ESC (c and ESC (l codes. */
+typedef struct {
+  const char *name;
+  unsigned char c_media, l_media;
+  const printmode_t *mode;
+} media_t;
+
+static const media_t media_types[] = {
+  { "Plain",              0x00, 0x00, &mode_standard },
+  { "Envelope",           0x08, 0x08, &mode_envelope },
+  { "PhotoPro",           0x09, 0x0d, &mode_pro },
+  { "PhotoPlusGlossyII",  0x1d, 0x23, &mode_glossy2 },
+  { "PhotoPlusGlossy",    0x0b, 0x11, &mode_glossy },
+  { "PhotoPlusSemiGloss", 0x1a, 0x1f, &mode_glossy },
+  { "GlossyPhoto",        0x05, 0x05, &mode_glossy },
+  { "Matte",              0x0a, 0x10, &mode_matte },
+  { "HighRes",            0x07, 0x07, &mode_matte },
+};
+
+typedef enum { Q_STANDARD, Q_DRAFT, Q_FAST, Q_HIGH } quality_t;
 
 /* Returns the offset of the ESC (s last-page flag's value inside the page buffer. */
-static size_t page_header(buf_t *b, const geometry_t *g, int page_no, quality_t q)
+static size_t page_header(buf_t *b, const geometry_t *g, int page_no, const media_t *md, const printmode_t *m, quality_t q)
 {
-  static const unsigned char ink_standard[36] = {
-    0x80, 0x80, 0x01, 0x22, 0x00, 0x03, 0x22, 0x00, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02
-  };
-  static const unsigned char ink_draft[36] = {
-    0x80, 0x00, 0x01, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02
-  };
-  const unsigned char *ink_setup = q == Q_STANDARD ? ink_standard : ink_draft;
+  unsigned char t[36] = { 0 };
   unsigned char p[46] = { 0 };
   unsigned char d[4] = { 0x02, 0x58, 0x02, 0x58 };
-  unsigned char c[3] = { 0x30, 0x00, q == Q_STANDARD ? 0x03 : q == Q_DRAFT ? 0x01 : 0x00 };
-  if (q != Q_STANDARD) {
-    d[0] = d[2] = 0x01; /* 300 dpi */
-    d[1] = d[3] = 0x2c;
-  }
-  unsigned char l[2] = { 0x34, 0x00 };
+  unsigned char c[3] = { 0x30, md->c_media, m->c2 };
+  unsigned char l[2] = { 0x34, md->l_media };
   unsigned char dollar[5] = { 0x01, 0, 0, 0, 0 };
   size_t last_flag;
+
+  memcpy(t, m->t, 15);
+  if (m->planes[3].code == 'k')
+    memcpy(t + 15, photo_t_tail, 21);
+  else if (m->nplanes == 8)
+    memcpy(t + 15, sf_t_tail, 21);
+  if (m == &mode_draft) {
+    d[0] = d[2] = 0x01; /* 300 dpi */
+    d[1] = d[3] = 0x2c;
+    c[2] = q == Q_FAST ? 0x00 : 0x01;
+  }
 
   if (page_no == 1)
     canon_cmd1(b, 'b', 0x01);
   canon_cmd(b, 'd', d, 4);
-  canon_cmd(b, 't', ink_setup, 36);
+  canon_cmd(b, 't', t, 36);
   canon_cmd(b, 'c', c, 3);
 
-  put_be16(p + 0, (g->area_h + 9) / 10);
-  put_be16(p + 4, (g->area_w + 9) / 10);
-  put_be16(p + 6, g->flag);
+  if (!g->borderless) {
+    put_be16(p + 0, (g->area_h + 9) / 10);
+    put_be16(p + 4, (g->area_w + 9) / 10);
+    put_be16(p + 6, g->flag);
+  }
   put_be16(p + 12, DPI);
-  put_be32(p + 14, g->left);
-  put_be32(p + 18, g->top);
+  put_be32(p + 14, (unsigned)g->left);
+  put_be32(p + 18, (unsigned)g->top);
   put_be32(p + 22, g->area_w);
   put_be32(p + 26, g->area_h);
   put_be32(p + 38, g->paper_w);
@@ -330,7 +416,7 @@ static size_t page_header(buf_t *b, const geometry_t *g, int page_no, quality_t 
   canon_cmd(b, '$', dollar, 5);
   canon_cmd1(b, 'b', 0x01);
   canon_cmd1(b, 'I', 0x01);
-  canon_cmd1(b, 'J', q == Q_STANDARD ? LINES_PER_BLOCK : LINES_PER_BLOCK / 2);
+  canon_cmd1(b, 'J', LINES_PER_BLOCK / m->sc);
   return last_flag;
 }
 
@@ -358,8 +444,9 @@ static void packbits_line(buf_t *b, const unsigned char *row, int n)
   buf_byte(b, 0x80);
 }
 
-static const geometry_t *find_geometry(const cups_page_header2_t *h)
+static const geometry_t *find_geometry(const cups_page_header2_t *h, int allow_borderless)
 {
+  static geometry_t custom;
   int w = (int)((h->PageSize[0] * DPI + 36) / 72), hh = (int)((h->PageSize[1] * DPI + 36) / 72);
   const geometry_t *best = &geometries[0];
   int best_err = 1 << 30;
@@ -372,9 +459,24 @@ static const geometry_t *find_geometry(const cups_page_header2_t *h)
       best = &geometries[i];
     }
   }
+  if (allow_borderless && strstr(h->cupsPageSizeName, "FullBleed")) {
+    /* Borderless: Canon prints an area 47 dots past the top/left edges, 72 past the right and
+       119 past the bottom, scaling the page image up to fill it. */
+    custom = *best;
+    if (best_err > 60) {
+      custom.paper_w = w;
+      custom.paper_h = hh;
+    }
+    custom.name = "Borderless";
+    custom.left = custom.top = -47;
+    custom.area_w = custom.paper_w + 119;
+    custom.area_h = custom.paper_h + 166;
+    custom.flag = 0;
+    custom.borderless = 1;
+    return &custom;
+  }
   if (best_err > 60) /* > 0.1 inch off: unknown size, derive Canon-style margins */
   {
-    static geometry_t custom;
     custom.name = "Custom";
     custom.paper_w = w;
     custom.paper_h = hh;
@@ -383,6 +485,7 @@ static const geometry_t *find_geometry(const cups_page_header2_t *h)
     custom.area_w = w - 160 > MAX_WIDTH_DOTS ? MAX_WIDTH_DOTS : w - 160;
     custom.area_h = hh - 188;
     custom.flag = 0;
+    custom.borderless = 0;
     if (w - 160 > MAX_WIDTH_DOTS) { /* wider than the print head sweep: centre it, like Letter */
       custom.left = (w - MAX_WIDTH_DOTS + 1) / 2;
       custom.flag = 7;
@@ -393,52 +496,63 @@ static const geometry_t *find_geometry(const cups_page_header2_t *h)
   return best;
 }
 
+/* ---------- band encoder: multi-level error diffusion, channel packing, bands ---------- */
 
-/* ---------- band encoder: error diffusion, dot packing, 16-line blocks ---------- */
-
-#define MAX_CH 4
+#define MAX_INK 4
 
 typedef struct {
-  int nch;                  /* 1 (K) or 4 (C,M,Y,K) */
-  const char *inks;         /* ESC (L argument */
-  int levels[MAX_CH];       /* 3 = ternary (0/1/2 drops, 5 dots per byte), 2 = 1 bit */
-  int width;
-  int *err_cur[MAX_CH], *err_next[MAX_CH];
+  const printmode_t *m;
+  int nplanes;
+  const plane_t *planes;
+  plane_t mono_plane;       /* black-only encoder: one K channel */
+  int width, lines_per_block;
+  int *err_cur[MAX_INK], *err_next[MAX_INK];
+  unsigned char *level[MAX_INK]; /* quantized level per dot, current line */
   unsigned char *packed;    /* scratch for one packed line */
-  buf_t band[MAX_CH];       /* current band, per channel */
-  int band_has_ink[MAX_CH];
+  buf_t band[9];            /* current band, per channel */
+  int band_has_ink[9];
   int band_lines, skip, sent_inks;
-  int lines_per_block;
   int row;                  /* rows encoded so far (serpentine direction) */
   unsigned rng;             /* threshold noise */
   buf_t body;               /* encoded bands for this page */
 } enc_t;
 
-static void enc_init(enc_t *e, const char *inks, int width, int lines_per_block, int two_drop_cm)
+/* mono != 0: a black-only encoder (one 1-bit K channel) for pages with no colour. */
+static void enc_init(enc_t *e, const printmode_t *m, int width, int mono)
 {
   int c;
   memset(e, 0, sizeof(*e));
-  e->nch = (int)strlen(inks);
-  e->inks = inks;
+  e->m = m;
+  if (mono) {
+    plane_t k = { 'K', 3, P_BIT, ID };
+    e->mono_plane = k;
+    e->planes = &e->mono_plane;
+    e->nplanes = 1;
+  } else {
+    e->planes = m->planes;
+    e->nplanes = m->nplanes;
+  }
   e->width = width;
-  e->lines_per_block = lines_per_block;
+  e->lines_per_block = LINES_PER_BLOCK / m->sc;
   e->rng = 0x1234567u;
-  for (c = 0; c < e->nch; c++) {
-    e->levels[c] = two_drop_cm && (inks[c] == 'C' || inks[c] == 'M') ? 3 : 2;
+  for (c = 0; c < MAX_INK; c++) {
     e->err_cur[c] = calloc(width + 2, sizeof(int));
     e->err_next[c] = calloc(width + 2, sizeof(int));
+    e->level[c] = calloc(width, 1);
   }
-  e->packed = malloc(width / 5 + 8 > width / 8 + 8 ? width / 5 + 8 : width / 8 + 8);
+  e->packed = malloc(width / 4 + 8);
 }
 
 static void enc_free(enc_t *e)
 {
   int c;
-  for (c = 0; c < e->nch; c++) {
+  for (c = 0; c < MAX_INK; c++) {
     free(e->err_cur[c]);
     free(e->err_next[c]);
-    free(e->band[c].data);
+    free(e->level[c]);
   }
+  for (c = 0; c < 9; c++)
+    free(e->band[c].data);
   free(e->packed);
   free(e->body.data);
 }
@@ -446,7 +560,7 @@ static void enc_free(enc_t *e)
 static void enc_flush_band(enc_t *e)
 {
   int c, any = 0;
-  for (c = 0; c < e->nch; c++)
+  for (c = 0; c < e->nplanes; c++)
     any |= e->band_has_ink[c];
   if (any) {
     if (e->skip) {
@@ -454,10 +568,13 @@ static void enc_flush_band(enc_t *e)
       e->skip = 0;
     }
     if (!e->sent_inks) {
-      canon_cmd(&e->body, 'L', (const unsigned char *)e->inks, e->nch);
+      unsigned char inks[9];
+      for (c = 0; c < e->nplanes; c++)
+        inks[c] = e->planes[c].code;
+      canon_cmd(&e->body, 'L', inks, e->nplanes);
       e->sent_inks = 1;
     }
-    for (c = 0; c < e->nch; c++) {
+    for (c = 0; c < e->nplanes; c++) {
       /* A channel with no ink in this band is sent as an empty block, like Canon does. */
       if (e->band_has_ink[c])
         canon_cmd(&e->body, 'F', e->band[c].data, (unsigned)e->band[c].len);
@@ -466,62 +583,83 @@ static void enc_flush_band(enc_t *e)
     }
   } else
     e->skip++;
-  for (c = 0; c < e->nch; c++) {
+  for (c = 0; c < e->nplanes; c++) {
     e->band[c].len = 0;
     e->band_has_ink[c] = 0;
   }
   e->band_lines = 0;
 }
 
-/* amount[c][x]: ink per dot in 1/1000 drop (0..2000 for ternary channels, 0..1000 otherwise). */
-static void enc_row(enc_t *e, int *const amount[MAX_CH])
+/* Quantize one logical ink to levels 0..maxlevel: serpentine Floyd-Steinberg with a little
+   threshold noise (plain FS shows streaks and "worm" patterns in light tints).
+   amount: ink per dot in 1/1000 level. */
+static void quantize(enc_t *e, int c, const int *amount, int maxlevel)
 {
-  int c, i, n;
-  for (c = 0; c < e->nch; c++) {
-    int *ec = e->err_cur[c], *en = e->err_next[c], *tmp;
-    const int *a = amount[c];
-    int ternary = e->levels[c] == 3;
+  int *ec = e->err_cur[c], *en = e->err_next[c], *tmp;
+  unsigned char *lv = e->level[c];
+  int i;
+  memset(en, 0, (e->width + 2) * sizeof(int));
+  for (i = 0; i < e->width; i++) {
+    int x = (e->row & 1) ? e->width - 1 - i : i;
+    int fwd = (e->row & 1) ? -1 : 1;
+    int v = amount[x] + (ec[x + 1] >> 4), q, err, jitter;
+    e->rng = e->rng * 1103515245u + 12345u;
+    jitter = (int)((e->rng >> 16) % 301) - 150;
+    q = (v + 500 - jitter) / 1000;
+    if (v + 500 - jitter < 0)
+      q = 0;
+    if (q > maxlevel)
+      q = maxlevel;
+    if (amount[x] == 0 && v < 500)
+      q = 0; /* never put ink where the page is white */
+    lv[x] = (unsigned char)q;
+    err = v - q * 1000;
+    ec[x + 1 + fwd] += err * 7;
+    en[x + 1 - fwd] += err * 3;
+    en[x + 1] += err * 5;
+    en[x + 1 + fwd] += err;
+  }
+  tmp = e->err_cur[c];
+  e->err_cur[c] = e->err_next[c];
+  e->err_next[c] = tmp;
+}
+
+/* amount[ink][x] for logical inks C, M, Y, K/k (only [3] is used by a black-only encoder). */
+static void enc_row(enc_t *e, int *const amount[MAX_INK])
+{
+  int c, x, p;
+  int used[MAX_INK] = { 0 };
+  for (p = 0; p < e->nplanes; p++)
+    used[e->planes[p].src] = 1;
+  for (c = 0; c < MAX_INK; c++)
+    if (used[c])
+      quantize(e, c, amount[c], e->nplanes == 1 ? 1 : e->m->maxlevel[c]);
+
+  for (p = 0; p < e->nplanes; p++) {
+    const plane_t *pl = &e->planes[p];
+    const unsigned char *lv = e->level[pl->src];
     unsigned char *out = e->packed;
-    int nbytes = ternary ? (e->width + 4) / 5 : (e->width + 7) / 8;
-
+    int per = pl->kind == P_BIT ? 8 : pl->kind == P_2BIT ? 4 : 5;
+    int nbytes = (e->width + per - 1) / per, n;
     memset(out, 0, nbytes);
-    memset(en, 0, (e->width + 2) * sizeof(int));
-    /* Floyd-Steinberg, serpentine (alternate direction each line) with a little threshold
-       noise: without these, light tints show streaks and "worm" patterns. */
-    for (i = 0; i < e->width; i++) {
-      int x = (e->row & 1) ? e->width - 1 - i : i;
-      int fwd = (e->row & 1) ? -1 : 1;
-      int v = a[x] + (ec[x + 1] >> 4), q, err, jitter;
-      e->rng = e->rng * 1103515245u + 12345u;
-      jitter = (int)((e->rng >> 16) % 301) - 150;
-      if (ternary)
-        q = v < 500 + jitter ? 0 : v < 1500 + jitter ? 1 : 2;
-      else
-        q = v >= 500 + jitter;
-      if (a[x] == 0 && v < 500)
-        q = 0; /* never put ink where the page is white */
-      err = v - q * 1000;
-      if (q) {
-        if (ternary) {
-          static const int place[5] = { 81, 27, 9, 3, 1 };
-          out[x / 5] += (unsigned char)(q * place[x % 5]);
-        } else
-          out[x >> 3] |= 0x80 >> (x & 7);
+    for (x = 0; x < e->width; x++) {
+      int v = pl->map[lv[x]];
+      if (!v)
+        continue;
+      if (pl->kind == P_BIT)
+        out[x >> 3] |= 0x80 >> (x & 7);
+      else if (pl->kind == P_2BIT)
+        out[x >> 2] |= (unsigned char)(v << (6 - 2 * (x & 3)));
+      else {
+        static const int place[5] = { 81, 27, 9, 3, 1 };
+        out[x / 5] += (unsigned char)(v * place[x % 5]);
       }
-      ec[x + 1 + fwd] += err * 7;
-      en[x + 1 - fwd] += err * 3;
-      en[x + 1] += err * 5;
-      en[x + 1 + fwd] += err;
     }
-    tmp = e->err_cur[c];
-    e->err_cur[c] = e->err_next[c];
-    e->err_next[c] = tmp;
-
     n = nbytes;
     while (n > 0 && out[n - 1] == 0)
       n--;
-    packbits_line(&e->band[c], out, n);
-    e->band_has_ink[c] |= n > 0;
+    packbits_line(&e->band[p], out, n);
+    e->band_has_ink[p] |= n > 0;
   }
   e->row++;
   if (++e->band_lines == e->lines_per_block)
@@ -533,21 +671,20 @@ static void enc_finish(enc_t *e)
   int c, any = 0;
   if (!e->band_lines)
     return;
-  for (c = 0; c < e->nch; c++)
+  for (c = 0; c < e->nplanes; c++)
     any |= e->band_has_ink[c];
   if (!any)
     return; /* trailing blank lines are simply not sent */
   while (e->band_lines < e->lines_per_block) {
-    for (c = 0; c < e->nch; c++)
+    for (c = 0; c < e->nplanes; c++)
       if (e->band_has_ink[c])
         buf_byte(&e->band[c], 0x80);
     e->band_lines++;
   }
-  e->band_lines = e->lines_per_block;
   enc_flush_band(e);
 }
 
-/* ---------- colour conversion (table built from Canon's plain-paper output) ---------- */
+/* ---------- colour conversion (tables built from Canon's output) ---------- */
 
 static void lut_ink(const unsigned short (*lut)[4], int r, int g, int b, int out[4])
 {
@@ -570,10 +707,6 @@ static void lut_ink(const unsigned short (*lut)[4], int r, int g, int b, int out
     out[c] = ((c0 / 255) * (255 - tr) + (c1 / 255) * tr) / 255;
   }
 #undef L
-  if (r == 0 && g == 0 && b == 0) { /* pure black: black ink only, like Canon's text */
-    out[0] = out[1] = out[2] = 0;
-    out[3] = lut[0][3];
-  }
 }
 
 static volatile sig_atomic_t canceled = 0;
@@ -589,7 +722,7 @@ int main(int argc, char *argv[])
   int have_page = 0;
   int density = 95; /* max black coverage in percent; Canon's driver uses about 95% */
   int force_mono = 0;
-  int fast = 0; /* PrintQuality=Fast: Canon's "Fast" draft setting */
+  char quality_opt[32] = ""; /* PrintQuality from the job options (PPDs before 1.2 set no OutputType) */
   int num_options;
   cups_option_t *options = NULL;
   const char *val;
@@ -598,6 +731,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Usage: %s job user title copies options [file]\n", argv[0]);
     return 1;
   }
+  /* Check for the back-channel before opening the input, which could otherwise become fd 3. */
+  have_backchannel = fcntl(3, F_GETFD) != -1;
   if (argc == 7 && (fd = open(argv[6], O_RDONLY)) < 0) {
     perror("ERROR: Unable to open raster file");
     return 1;
@@ -612,8 +747,8 @@ int main(int argc, char *argv[])
     density = atoi(val);
   if ((val = cupsGetOption("ColorModel", num_options, options)) != NULL && !strcasecmp(val, "Gray"))
     force_mono = 1;
-  if ((val = cupsGetOption("PrintQuality", num_options, options)) != NULL && !strcasecmp(val, "Fast"))
-    fast = 1;
+  if ((val = cupsGetOption("PrintQuality", num_options, options)) != NULL)
+    snprintf(quality_opt, sizeof(quality_opt), "%s", val);
   cupsFreeOptions(num_options, options);
   fprintf(stderr, "DEBUG: rastertoip100 %s, ink density %d%%%s\n", IP100_VERSION, density, force_mono ? ", black only" : "");
 
@@ -621,14 +756,18 @@ int main(int argc, char *argv[])
   job_start();
 
   while (!canceled && cupsRasterReadHeader2(ras, &h)) {
-    const geometry_t *g = find_geometry(&h);
+    const geometry_t *g;
+    const media_t *md = &media_types[0];
+    const char *qname;
+    const printmode_t *m;
     unsigned bpp = h.cupsBitsPerPixel / 8;
-    int x0, y0, width, height, y, x, c, sc, black1000;
+    int x0, y0, width, height, y, x, c, sc, black1000, use_mono;
     int color_input, neutral = 1;
+    int *xmap = NULL, last_sy = -1;
     quality_t q;
-    const unsigned short (*lut)[4];
+    size_t i;
     unsigned char *in;
-    int *amt[MAX_CH], *kamt[MAX_CH] = { 0 }; /* colour inks C,M,Y,K; black-only K */
+    int *amt[MAX_INK], *kamt[MAX_INK] = { 0 }; /* colour inks; black-only K in [3] */
     enc_t mono, color;
 
     if (h.cupsBitsPerColor != 8 || (bpp != 1 && bpp != 3)) {
@@ -644,46 +783,80 @@ int main(int argc, char *argv[])
       read_status(0.0);
     }
 
-    /* The PPD selects draft by asking for a 300 dpi raster. */
-    q = h.HWResolution[0] == 300 ? (fast ? Q_FAST : Q_DRAFT) : Q_STANDARD;
-    sc = q == Q_STANDARD ? 1 : 2;
-    lut = q == Q_STANDARD ? ip100_plain_lut : ip100_draft_lut;
+    /* Media type and quality come from the page header (set by the PPD options). */
+    for (i = 0; i < sizeof(media_types) / sizeof(media_types[0]); i++)
+      if (!strcasecmp(h.MediaType, media_types[i].name))
+        md = &media_types[i];
+    qname = h.OutputType[0] ? h.OutputType : quality_opt;
+    q = h.HWResolution[0] == 300 ? (!strcasecmp(qname, "Fast") ? Q_FAST : Q_DRAFT)
+        : !strcasecmp(qname, "High") ? Q_HIGH : Q_STANDARD;
+    m = md->mode;
+    if (h.HWResolution[0] == 300 && m->sc == 1) {
+      if (m != &mode_standard)
+        fprintf(stderr, "WARNING: Draft quality is for plain paper; printing in plain-paper draft mode\n");
+      md = &media_types[0];
+      m = &mode_draft;
+    } else if (m == &mode_standard && q == Q_HIGH)
+      m = &mode_superfine;
+    if (h.HWResolution[0] != (m->sc == 1 ? 600u : 300u)) {
+      fprintf(stderr, "ERROR: Unsupported raster resolution %u dpi\n", h.HWResolution[0]);
+      return 1;
+    }
+    /* Borderless only on photo papers, as in Canon's driver; otherwise use normal margins. */
+    g = find_geometry(&h, !m->mono_pages && m != &mode_envelope);
+    if (strstr(h.cupsPageSizeName, "FullBleed") && !g->borderless)
+      fprintf(stderr, "WARNING: Borderless printing needs a photo paper type; printing with margins\n");
+    sc = m->sc;
     /* Black-only darkness scale: Canon caps black at ~95% in standard mode, 100% in draft. */
-    black1000 = q == Q_STANDARD ? density * 10 : (density * 1000 / 95 > 1000 ? 1000 : density * 1000 / 95);
+    black1000 = sc == 1 ? density * 10 : (density * 1000 / 95 > 1000 ? 1000 : density * 1000 / 95);
 
     page_no++;
     fprintf(stderr, "PAGE: %d 1\n", page_no);
-    fprintf(stderr, "DEBUG: Page %d: %s, raster %ux%u @ %ux%u dpi, %u bpp\n", page_no, g->name,
-            h.cupsWidth, h.cupsHeight, h.HWResolution[0], h.HWResolution[1], h.cupsBitsPerPixel);
+    fprintf(stderr, "DEBUG: Page %d: %s, %s, %s mode, raster %ux%u @ %ux%u dpi, %u bpp\n", page_no, g->name, md->name,
+            m->name, h.cupsWidth, h.cupsHeight, h.HWResolution[0], h.HWResolution[1], h.cupsBitsPerPixel);
 
-    /* Raster normally covers the printable area; if it covers the whole sheet, crop to it. */
-    x0 = (int)h.cupsWidth >= g->paper_w / sc - 2 ? g->left / sc : 0;
-    y0 = (int)h.cupsHeight >= g->paper_h / sc - 2 ? g->top / sc : 0;
     width = g->area_w / sc;
     height = g->area_h / sc;
-    color_input = bpp == 3 && !force_mono;
+    if (g->borderless) {
+      /* Scale the full-page raster up to the (larger) borderless print area. */
+      x0 = y0 = 0;
+      xmap = malloc(width * sizeof(int));
+      for (x = 0; x < width; x++)
+        xmap[x] = (int)((long)x * h.cupsWidth / width);
+    } else {
+      /* Raster normally covers the printable area; if it covers the whole sheet, crop to it. */
+      x0 = (int)h.cupsWidth >= g->paper_w / sc - 2 ? g->left / sc : 0;
+      y0 = (int)h.cupsHeight >= g->paper_h / sc - 2 ? g->top / sc : 0;
+    }
+    color_input = bpp == 3 && !(force_mono && m->mono_pages);
 
     in = malloc(h.cupsBytesPerLine);
-    for (c = 0; c < MAX_CH; c++)
+    for (c = 0; c < MAX_INK; c++)
       amt[c] = calloc(width, sizeof(int));
-    kamt[0] = calloc(width, sizeof(int));
-    enc_init(&mono, "K", width, LINES_PER_BLOCK / sc, q == Q_STANDARD);
+    kamt[3] = calloc(width, sizeof(int));
+    if (m->mono_pages)
+      enc_init(&mono, m, width, 1);
     if (color_input)
-      enc_init(&color, "CMYK", width, LINES_PER_BLOCK / sc, q == Q_STANDARD);
+      enc_init(&color, m, width, 0);
 
-    last_flag = page_header(&page, g, page_no, q);
+    last_flag = page_header(&page, g, page_no, md, m, q);
 
-    for (y = 0; y < (int)h.cupsHeight; y++) {
-      int sy = y - y0;
+    for (y = 0; y < height; y++) {
+      int sy = g->borderless ? (int)((long)y * h.cupsHeight / height) : y + y0;
       int lr = -1, lg = -1, lb = -1, ink[4] = { 0 };
 
-      if (cupsRasterReadPixels(ras, in, h.cupsBytesPerLine) == 0)
+      if (sy >= (int)h.cupsHeight)
         break;
-      if (sy < 0 || sy >= height)
-        continue;
+      while (last_sy < sy) { /* read forward to raster line sy (repeats lines when scaling up) */
+        if (cupsRasterReadPixels(ras, in, h.cupsBytesPerLine) == 0)
+          break;
+        last_sy++;
+      }
+      if (last_sy < sy)
+        break;
 
       for (x = 0; x < width; x++) {
-        int sx = x + x0, r, gg, b, v;
+        int sx = xmap ? xmap[x] : x + x0, r, gg, b, v;
         if (sx >= (int)h.cupsWidth)
           r = gg = b = 255;
         else if (bpp == 1)
@@ -694,10 +867,10 @@ int main(int argc, char *argv[])
           b = in[sx * 3 + 2];
         }
 
-        /* Black-only encoding: darkness scaled by ink density. */
-        v = (r * 30 + gg * 59 + b * 11) / 100;
-        kamt[0][x] = ((255 - v) * black1000) / 255;
-
+        if (m->mono_pages) { /* black-only encoding: darkness scaled by ink density */
+          v = (r * 30 + gg * 59 + b * 11) / 100;
+          kamt[3][x] = ((255 - v) * black1000) / 255;
+        }
         if (color_input) {
           if (r != gg || gg != b)
             neutral = 0;
@@ -705,44 +878,56 @@ int main(int argc, char *argv[])
             if (r == 255 && gg == 255 && b == 255)
               ink[0] = ink[1] = ink[2] = ink[3] = 0;
             else
-              lut_ink(lut, r, gg, b, ink);
+              lut_ink(m->lut, r, gg, b, ink);
             lr = r; lg = gg; lb = b;
           }
           for (c = 0; c < 4; c++)
             amt[c][x] = ink[c] * density / 95;
         }
       }
-      enc_row(&mono, kamt);
+      if (m->mono_pages)
+        enc_row(&mono, kamt);
       if (color_input)
         enc_row(&color, amt);
     }
-    enc_finish(&mono);
+    fprintf(stderr, "DEBUG: Page %d: used raster lines 0-%d of %u\n", page_no, last_sy, h.cupsHeight);
+    /* Consume any raster lines not needed (e.g. below the printable area). */
+    while (last_sy + 1 < (int)h.cupsHeight && cupsRasterReadPixels(ras, in, h.cupsBytesPerLine))
+      last_sy++;
+
+    if (m->mono_pages)
+      enc_finish(&mono);
     if (color_input)
       enc_finish(&color);
 
-    if (color_input && !neutral) {
-      fprintf(stderr, "DEBUG: Page %d printed in colour\n", page_no);
-      buf_put(&page, color.body.data, color.body.len);
-    } else {
-      fprintf(stderr, "DEBUG: Page %d printed black only\n", page_no);
+    /* On plain paper, pages with no colour go out black-only, like Canon's driver. */
+    use_mono = m->mono_pages && (!color_input || neutral);
+    fprintf(stderr, "DEBUG: Page %d printed %s\n", page_no, use_mono ? "black only" : "in colour");
+    if (use_mono)
       buf_put(&page, mono.body.data, mono.body.len);
-    }
+    else
+      buf_put(&page, color.body.data, color.body.len);
     canon_skip(&page, 1);
     buf_byte(&page, 0x0c); /* form feed: eject */
     have_page = 1;
 
-    enc_free(&mono);
+    if (m->mono_pages)
+      enc_free(&mono);
     if (color_input)
       enc_free(&color);
-    for (c = 0; c < MAX_CH; c++)
+    for (c = 0; c < MAX_INK; c++)
       free(amt[c]);
-    free(kamt[0]);
+    free(kamt[3]);
+    free(xmap);
     free(in);
   }
 
   if (have_page) {
     page.data[last_flag] = 0x01; /* ESC (s 1 marks the final page */
     buf_put(&page, "\x1b(b\x01\x00\x00", 6);
+    /* ESC @ (reset), as Canon's driver sends at the end of every job. Without it the iP100
+       can stay in "receiving job" state afterwards, power light flashing. */
+    buf_put(&page, "\x1b@", 2);
     write_all(page.data, page.len);
   }
   job_end();
