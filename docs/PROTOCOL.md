@@ -69,9 +69,22 @@ This driver reproduces that with a 17×17×17 RGB→CMYK table (`src/ip100_plain
 `tools/buildlut.py` from the measurements in `data/`) and serpentine error diffusion with a
 little threshold noise.
 
+## Draft quality (300 dpi)
+
+`(d 01 2c 01 2c`, `(t 80 00 01 | 01 00 02 ×4`, `(J 08`, all inks 1 bit per dot, same `(p` (600 dpi
+units). Canon's "Normal (Fast)" and "Fast" settings send identical data and differ only in
+`(c 30 00 01` vs `(c 30 00 00`. Black is 100% coverage (no 95% cap). Table: `src/ip100_draft_lut.h`.
+
+## Maintenance
+
+Unknown. Canon's command filter only emits its maintenance commands after reading the printer's
+status through Canon's own USB class driver, which is Intel-only and cannot load on Apple Silicon,
+so the commands could not be captured. `@TestPrint=NozzleCheck` in a BJL block (the format often cited for Canon inkjets) did
+**not** work on the iP100 and left it waiting for data until power-cycled — don't send it.
+
 ## Not yet implemented (observed)
 
-- 300 dpi fast modes: `(d 01 2c 01 2c`, `(J 08`, all inks 1-bit, `(c 30 00 01`.
+- Super Fine quality and envelope media: 8 channels `43 4d 59 4b 83 8d c3 cd`, C/M/Y 2 bits per dot (`02 00 04`).
 - Photo papers: `(c 30 0b 03`, `(L` with nine channels `43 4d 59 6b 83 8d ab c3 cd`, different `(t`.
 
 ## Printer status

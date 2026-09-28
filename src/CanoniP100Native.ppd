@@ -1,6 +1,6 @@
 *PPD-Adobe: "4.3"
 *FormatVersion: "4.3"
-*FileVersion: "1.0.0"
+*FileVersion: "1.1.0"
 *LanguageVersion: English
 *LanguageEncoding: ISOLatin1
 *PCFileName: "IP100NAT.PPD"
@@ -23,6 +23,8 @@
 *cupsManualCopies: True
 *DefaultOutputOrder: Reverse
 *cupsFilter2: "application/vnd.cups-raster application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
+*cupsFilter2: "application/vnd.cups-command application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
+*cupsCommands: "ReportLevels"
 *cupsLanguages: "en"
 
 *OpenUI *ColorModel/Color Mode: PickOne
@@ -32,11 +34,15 @@
 *ColorModel Gray/Black and White: "<</cupsColorSpace 18/cupsColorOrder 0/cupsBitsPerColor 8/cupsCompression 0>>setpagedevice"
 *CloseUI: *ColorModel
 
-*OpenUI *Resolution/Resolution: PickOne
-*OrderDependency: 10 AnySetup *Resolution
 *DefaultResolution: 600dpi
-*Resolution 600dpi/600 DPI: "<</HWResolution[600 600]>>setpagedevice"
-*CloseUI: *Resolution
+
+*OpenUI *PrintQuality/Print Quality: PickOne
+*OrderDependency: 10 AnySetup *PrintQuality
+*DefaultPrintQuality: Standard
+*PrintQuality Standard/Standard (600 dpi): "<</HWResolution[600 600]>>setpagedevice"
+*PrintQuality Draft/Draft (300 dpi): "<</HWResolution[300 300]>>setpagedevice"
+*PrintQuality Fast/Fast (300 dpi, quickest): "<</HWResolution[300 300]>>setpagedevice"
+*CloseUI: *PrintQuality
 
 *OpenUI *InkDensity/Ink Density: PickOne
 *OrderDependency: 20 AnySetup *InkDensity
@@ -74,6 +80,18 @@
 *PageRegion 8x10/8 x 10 in: "<</PageSize[576 720]/ImagingBBox null>>setpagedevice"
 *PageRegion Env10/Envelope #10: "<</PageSize[297 684]/ImagingBBox null>>setpagedevice"
 *CloseUI: *PageRegion
+
+*% Custom sizes: 54x86 mm up to 8.5x14 in; Canon margins (left/right 80, top 70, bottom 118 dots at 600 dpi)
+*VariablePaperSize: True
+*MaxMediaWidth: "612"
+*MaxMediaHeight: "1008"
+*HWMargins: 9.6 14.16 9.6 8.4
+*CustomPageSize True: "pop pop pop <</PageSize[5 -2 roll]/ImagingBBox null>>setpagedevice"
+*ParamCustomPageSize Width: 1 points 153 612
+*ParamCustomPageSize Height: 2 points 244 1008
+*ParamCustomPageSize WidthOffset: 3 points 0 0
+*ParamCustomPageSize HeightOffset: 4 points 0 0
+*ParamCustomPageSize Orientation: 5 int 0 0
 
 *DefaultImageableArea: Letter
 *ImageableArea Letter/US Letter: "18.12 14.16 594.12 783.6"

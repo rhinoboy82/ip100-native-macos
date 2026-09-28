@@ -1,13 +1,14 @@
-VERSION = 1.0.0
+VERSION = 1.1.0
 CFLAGS  = -O2 -Wall -Wextra -Wno-deprecated-declarations -mmacosx-version-min=11.0 -arch arm64 -arch x86_64
 
-build/rastertoip100: src/rastertoip100.c src/ip100_plain_lut.h
+build/rastertoip100: src/rastertoip100.c src/ip100_plain_lut.h src/ip100_draft_lut.h
 	mkdir -p build
 	clang $(CFLAGS) -o $@ $< -lcups
 
 # Regenerate the colour table from the measurement data in data/
 lut:
-	python3 tools/buildlut.py
+	python3 tools/buildlut.py plain
+	python3 tools/buildlut.py draft
 
 # Signed + notarized installer (see packaging/build-pkg.sh)
 pkg: build/rastertoip100

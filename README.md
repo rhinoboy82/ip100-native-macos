@@ -10,15 +10,19 @@ without Canon's original (Intel-only, no longer maintained) driver.
 
 ## What works
 
-- Plain paper, **colour** and **black & white**, 600 × 600 dpi
-- Paper sizes: Letter, Legal, A4, A5, B5, 4×6, 5×7, 8×10, #10 envelope
+- Plain paper, **colour** and **black & white**
+- **Print Quality**: Standard (600 dpi), Draft and Fast (300 dpi)
+- Paper sizes: Letter, Legal, A4, A5, B5, 4×6, 5×7, 8×10, #10 envelope, and **custom sizes**
+  from 54 × 86 mm up to 8.5 × 14 in
 - USB connection
 - Pages print last-page-first so the face-up stack comes out in order (as Canon's driver does)
 - Pages with no colour automatically print with black ink only
 - **Ink Density** option (Full / Normal / Light / Draft), useful on thin or cheap paper
+- **Ink levels** in System Settings (Printers & Scanners → the printer → Options & Supplies → Supply Levels),
+  updated after each job
 
-Not supported (yet): photo paper modes, borderless printing, draft 300 dpi mode,
-Bluetooth, ink-level display and printer maintenance functions.
+Not supported (yet): photo paper modes, borderless printing, Super Fine quality, nozzle check and
+cleaning from the Mac (use the printer's button, see Troubleshooting), Bluetooth.
 
 ## Install
 
@@ -33,6 +37,7 @@ Print options appear in the print dialog under the printer's options
 | Option | Choices |
 | --- | --- |
 | Color Mode | Color (default), Black and White |
+| Print Quality | **Standard** (600 dpi, default), Draft (300 dpi), Fast (300 dpi, quickest) |
 | Ink Density | Full 100%, **Normal 95%** (default, matches Canon), Light 85%, Draft 75% |
 
 ### Uninstall

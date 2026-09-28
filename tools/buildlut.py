@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Build the plain-paper RGB -> CMYK ink lookup table from Canon captures.
+"""Build an RGB -> CMYK ink lookup table from Canon ink measurements.
 
-Input: data/plain_*.json (ink measurements taken from Canon's plain-paper output).
-Output: src/ip100_plain_lut.h — 17x17x17 table of ink amounts in 1/1000 units
-(C, M: 0..2000 = up to two drops per dot; Y, K: 0..1000).
+Usage: buildlut.py MODE [--check]      (MODE = plain | draft)
+Input:  data/MODE_model.json, data/MODE_blend.json, data/MODE_samples.json
+        (made by tools/measure.py from Canon's output for test/color_test.pdf)
+Output: src/ip100_MODE_lut.h — 17x17x17 table of ink amounts in 1/1000 drop per dot.
+        plain: C/M up to 2000 (two drops), Y/K up to 1000.  draft: all up to 1000.
 """
 import colorsys
 import json
@@ -12,114 +14,103 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL = os.path.join(HERE, "..", "data", "plain_model.json")
-OUT = os.path.join(HERE, "..", "src", "ip100_plain_lut.h")
+DATA = os.path.join(HERE, "..", "data")
 N = 17
-
-m = json.load(open(MODEL))
-grid, grey = m["grid"], m["grey"]
-NH, NL = len(grid), len(grid[0])
-BLACK = [0.0, 0.0, 0.0, 0.95]
 
 
 def lerp(a, b, t):
     return [x + (y - x) * t for x, y in zip(a, b)]
 
 
-def grey_ink(v):
-    """Canon's ink for the neutral grey r=g=b=v (0..255)."""
-    for (v0, a0), (v1, a1) in zip(grey, grey[1:]):
-        if v0 <= v <= v1:
-            return lerp(a0, a1, (v - v0) / (v1 - v0) if v1 > v0 else 0)
-    return grey[-1][1]
+class Model:
+    def __init__(self, mode):
+        self.mode = mode
+        m = json.load(open(os.path.join(DATA, f"{mode}_model.json")))
+        self.grid, self.grey = m["grid"], m["grey"]
+        self.samples = [(tuple(c), a) for c, a in json.load(open(os.path.join(DATA, f"{mode}_samples.json")))]
+        self.blend = [(tuple(c), a) for c, a in json.load(open(os.path.join(DATA, f"{mode}_blend.json")))]
+        # Pure black: Canon uses black ink only (patch 4 of the test page).
+        self.black = [0.0, 0.0, 0.0, round(self.samples[3][1][3], 2)]
+        self.residuals = None
 
+    def grey_ink(self, v):
+        """Canon's ink for the neutral grey r=g=b=v (0..255)."""
+        g = self.grey
+        for (v0, a0), (v1, a1) in zip(g, g[1:]):
+            if v0 <= v <= v1:
+                return lerp(a0, a1, (v - v0) / (v1 - v0) if v1 > v0 else 0)
+        return g[-1][1]
 
-def column(i, l):
-    """Saturated-colour ink at hue column i, interpolated over lightness l."""
-    col = grid[i]  # rows ordered from light to dark
-    if l >= col[0]["l"]:
-        return lerp(col[0]["ink"], [0, 0, 0, 0], (l - col[0]["l"]) / (1 - col[0]["l"]))
-    if l <= col[-1]["l"]:
-        return lerp(BLACK, col[-1]["ink"], l / col[-1]["l"])
-    for a, b in zip(col, col[1:]):
-        if b["l"] <= l <= a["l"]:
-            return lerp(a["ink"], b["ink"], (a["l"] - l) / (a["l"] - b["l"]))
-    return col[-1]["ink"]
+    def column(self, i, l):
+        """Saturated-colour ink at hue column i, interpolated over lightness l."""
+        col = self.grid[i]  # rows ordered from light to dark
+        if l >= col[0]["l"]:
+            return lerp(col[0]["ink"], [0, 0, 0, 0], (l - col[0]["l"]) / (1 - col[0]["l"]))
+        if l <= col[-1]["l"]:
+            return lerp(self.black, col[-1]["ink"], l / col[-1]["l"])
+        for a, b in zip(col, col[1:]):
+            if b["l"] <= l <= a["l"]:
+                return lerp(a["ink"], b["ink"], (a["l"] - l) / (a["l"] - b["l"]))
+        return col[-1]["ink"]
 
+    def shell_ink(self, h, l):
+        nh = len(self.grid)
+        f = h * nh - 0.5
+        i0 = int(f // 1) % nh
+        t = f - (f // 1)
+        return lerp(self.column(i0, l), self.column((i0 + 1) % nh, l), t)
 
-def shell_ink(h, l):
-    f = h * NH - 0.5
-    i0 = int(f // 1) % NH
-    t = f - (f // 1)
-    return lerp(column(i0, l), column((i0 + 1) % NH, l), t)
+    def ink(self, r, g, b):
+        """Model: blend Canon's grey ink and saturated-colour ink by HLS saturation."""
+        if r == g == b == 0:
+            return self.black
+        h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        gi = self.grey_ink(l * 255)
+        if s == 0:
+            return gi
+        return lerp(gi, self.shell_ink(h, l), s)
 
-
-def ink(r, g, b):
-    if r == g == b == 0:
-        return BLACK
-    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
-    gi = grey_ink(l * 255)
-    if s == 0:
-        return gi
-    return lerp(gi, shell_ink(h, l), s)
-
-
-def _samples():
-    base = os.path.dirname(MODEL)
-    out = [(tuple(c), a) for c, a in json.load(open(os.path.join(base, "plain_blend.json")))]
-    out += [(tuple(round(v) for v in c["rgb"]), c["ink"]) for col in grid for c in col]
-    out += [(tuple(c), a) for c, a in json.load(open(os.path.join(base, "plain_samples.json")))]
-    return [(rgb, [x - y for x, y in zip(a, ink(*rgb))]) for rgb, a in out]
-
-
-RESIDUALS = None
-
-
-def ink_corrected(r, g, b, R=30.0, k=8):
-    """Model ink plus a distance-weighted correction toward nearby measured Canon samples."""
-    global RESIDUALS
-    if RESIDUALS is None:
-        RESIDUALS = _samples()
-    base = ink(r, g, b)
-    if r == g == b == 0:
-        return base
-    near = sorted(((math.dist((r, g, b), rgb), d) for rgb, d in RESIDUALS), key=lambda t: t[0])[:k]
-    num, wsum = [0.0] * 4, 0.0
-    for dist, d in near:
-        w = math.exp(-(dist / R) ** 2) / (dist + 1)
-        wsum += w
-        num = [n + w * x for n, x in zip(num, d)]
-    return [max(0.0, x + n / (wsum + 0.02)) for x, n in zip(base, num)]
+    def ink_corrected(self, r, g, b, R=30.0, k=8):
+        """Model ink plus a distance-weighted correction toward nearby measured Canon samples."""
+        if self.residuals is None:
+            pts = self.blend + [(tuple(round(v) for v in c["rgb"]), c["ink"]) for col in self.grid for c in col] + self.samples
+            self.residuals = [(rgb, [x - y for x, y in zip(a, self.ink(*rgb))]) for rgb, a in pts]
+        base = self.ink(r, g, b)
+        if r == g == b == 0:
+            return base
+        near = sorted(((math.dist((r, g, b), rgb), d) for rgb, d in self.residuals), key=lambda t: t[0])[:k]
+        num, wsum = [0.0] * 4, 0.0
+        for dist, d in near:
+            w = math.exp(-(dist / R) ** 2) / (dist + 1)
+            wsum += w
+            num = [n + w * x for n, x in zip(num, d)]
+        return [max(0.0, x + n / (wsum + 0.02)) for x, n in zip(base, num)]
 
 
 def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "plain"
+    m = Model(mode)
     if "--check" in sys.argv:
-        tests = [((0, 255, 255), [0.861, 0.0, 0.068, 0.0]), ((255, 0, 255), [0.003, 1.402, 0.045, 0.0]),
-                 ((255, 255, 0), [0.0, 0.002, 0.514, 0.0]), ((255, 0, 0), [0.001, 1.519, 0.665, 0.0]),
-                 ((0, 255, 0), [0.769, 0.0, 0.804, 0.0]), ((0, 0, 255), [1.434, 0.933, 0.0, 0.0]),
-                 ((128, 255, 255), [0.488, 0.001, 0.046, 0.0]), ((255, 128, 255), [0.001, 0.837, 0.04, 0.0]),
-                 ((255, 255, 128), [0.0, 0.0, 0.257, 0.0]), ((128, 128, 128), [0.282, 0.394, 0.142, 0.0]),
-                 ((64, 64, 64), [0.702, 0.993, 0.245, 0.153]), ((192, 192, 192), [0.096, 0.113, 0.049, 0.0]),
-                 ((160, 110, 70), [0.097, 0.546, 0.405, 0.0])]
-        for rgb, canon in tests:
-            p = ink_corrected(*rgb)
+        for rgb, canon in m.samples[:14]:
+            p = m.ink_corrected(*rgb)
             print(f"{str(rgb):16} canon {[round(x, 2) for x in canon]}  model {[round(x, 2) for x in p]}")
         return
+    out = os.path.join(HERE, "..", "src", f"ip100_{mode}_lut.h")
     step = 255 / (N - 1)
     vals = []
     for ri in range(N):
         for gi in range(N):
             for bi in range(N):
-                vals.append([max(0, round(1000 * x)) for x in ink_corrected(round(ri * step), round(gi * step), round(bi * step))])
-    with open(OUT, "w") as f:
-        f.write("/* Generated by tools/buildlut.py from Canon plain-paper captures. Do not edit. */\n")
-        f.write(f"#define IP100_LUT_N {N}\n")
-        f.write("/* [r][g][b] -> {C, M, Y, K} ink amount in 1/1000 (C/M up to 2000 = double drop) */\n")
-        f.write(f"static const unsigned short ip100_plain_lut[{N * N * N}][4] = {{\n")
+                vals.append([max(0, round(1000 * x)) for x in m.ink_corrected(round(ri * step), round(gi * step), round(bi * step))])
+    with open(out, "w") as f:
+        f.write(f"/* Generated by tools/buildlut.py {mode} from Canon ink measurements (data/{mode}_*.json). Do not edit. */\n")
+        f.write("#ifndef IP100_LUT_N\n#define IP100_LUT_N 17\n#endif\n")
+        f.write("/* [r][g][b] -> {C, M, Y, K} ink amount in 1/1000 drop per dot */\n")
+        f.write(f"static const unsigned short ip100_{mode}_lut[{N * N * N}][4] = {{\n")
         for k in range(0, len(vals), 4):
             f.write("  " + " ".join("{%d,%d,%d,%d}," % tuple(v) for v in vals[k:k + 4]) + "\n")
         f.write("};\n")
-    print(f"wrote {OUT}")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,14 @@
 #!/bin/bash
 # Runs as root after the package installs.
-# Moves any printer set up with a pre-1.0 build (filter under /Library/Printers/Canon/iP100Native)
-# over to the installed PPD, then removes the old location.
+# macOS keeps its own copy of the PPD for each printer, so refresh every printer that uses this
+# driver (current location, or the pre-1.0 filter under /Library/Printers/Canon/iP100Native).
+# Printer options the user chose are kept by lpadmin where they still exist.
 
 NEW_PPD="/Library/Printers/PPDs/Contents/Resources/CanoniP100Native.ppd"
 
 for ppd in /etc/cups/ppd/*.ppd; do
   [ -e "$ppd" ] || continue
-  if grep -q 'Canon/iP100Native/rastertoip100' "$ppd"; then
+  if grep -q 'iP100Native/rastertoip100' "$ppd"; then
     queue="$(basename "$ppd" .ppd)"
     /usr/sbin/lpadmin -p "$queue" -P "$NEW_PPD" >/dev/null 2>&1 || true
   fi
