@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>iP100 Native Driver @VERSION@ (unofficial)</title>
+    <organization>com.1010ths</organization>
+    <welcome file="Welcome.txt"/>
+    <license file="LICENSE.txt"/>
+    <conclusion file="Conclusion.txt"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <domains enable_localSystem="true"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.1010ths.pkg.ip100native"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.1010ths.pkg.ip100native" visible="false">
+        <pkg-ref id="com.1010ths.pkg.ip100native"/>
+    </choice>
+    <pkg-ref id="com.1010ths.pkg.ip100native" version="@VERSION@" onConclusion="none">component.pkg</pkg-ref>
+</installer-gui-script>

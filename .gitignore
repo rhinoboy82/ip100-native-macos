@@ -1,0 +1,18 @@
+# Build output
+build/
+dist/
+
+# Development-only material, not for distribution:
+#  ref/     Canon driver output captures and Canon's PPD (Canon copyright)
+#  vendor/  Gutenprint source used for reference only
+ref/
+vendor/
+
+*.ras
+*.prn
+*.pbm
+*.ppm
+.DS_Store
+
+# Private development notes (reference Canon captures)
+NOTES.md

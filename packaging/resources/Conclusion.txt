@@ -1,0 +1,14 @@
+The driver is installed.
+
+To add your printer:
+  1. Connect the iP100 by USB and turn it on.
+  2. Open System Settings > Printers & Scanners and click Add Printer, Scanner, or Fax.
+  3. Select the iP100, then under "Use" choose "Select Software..." and pick "Canon iP100 Native (unofficial driver)".
+  4. Click Add.
+
+If colours print with bands or gaps, the print head needs cleaning. With plain paper loaded:
+  - To print a nozzle check page, hold the printer's RESUME/CANCEL button until the power light flashes twice, then release.
+  - To clean the print head, hold RESUME/CANCEL until the power light flashes once, then release.
+Repeat the cleaning until the nozzle check page shows no gaps.
+
+To uninstall, run uninstall.sh from the project's GitHub page with sudo.
