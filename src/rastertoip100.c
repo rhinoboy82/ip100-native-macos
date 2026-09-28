@@ -36,7 +36,7 @@
 #include "ip100_pro_lut.h"
 #include "ip100_matte_lut.h"
 
-#define IP100_VERSION   "1.2.0"
+#define IP100_VERSION   "1.2.1"
 #define DPI             600
 #define LINES_PER_BLOCK 16 /* 600 dpi; draft (300 dpi) uses 8 */
 #define MAX_WIDTH_DOTS  4800 /* 8 inch print head sweep */
@@ -247,7 +247,50 @@ static void read_status(double timeout)
 
 /* ---------- maintenance commands (CUPS command files) ---------- */
 
-/* Handles CUPS command files; only "ReportLevels" is recognised, and it is ignored (see below). */
+/* ReportLevels: macOS only shows Supply Levels for printers that advertise this command, but
+   a status request outside a print job leaves the iP100 waiting for a job (power light
+   flashing). So nothing is sent to the printer: the levels recorded at the end of the last
+   print job are read back from the CUPS scheduler and reported again. */
+static void report_cached_levels(void)
+{
+  const char *printer = getenv("PRINTER");
+  char uri[1024];
+  http_t *http;
+  ipp_t *req, *resp;
+  ipp_attribute_t *attr;
+  static const char *const want[] = { "marker-levels" };
+  int bk = -1, cl = -1;
+
+  if (!printer)
+    return;
+  http = httpConnect2(cupsServer(), ippPort(), NULL, AF_UNSPEC, cupsEncryption(), 1, 10000, NULL);
+  if (!http)
+    return;
+  httpAssembleURIf(HTTP_URI_CODING_ALL, uri, sizeof(uri), "ipp", NULL, "localhost", ippPort(), "/printers/%s", printer);
+  req = ippNewRequest(IPP_OP_GET_PRINTER_ATTRIBUTES);
+  ippAddString(req, IPP_TAG_OPERATION, IPP_TAG_URI, "printer-uri", NULL, uri);
+  ippAddStrings(req, IPP_TAG_OPERATION, IPP_TAG_KEYWORD, "requested-attributes", 1, NULL, want);
+  if ((resp = cupsDoRequest(http, req, "/")) != NULL) {
+    if ((attr = ippFindAttribute(resp, "marker-levels", IPP_TAG_INTEGER)) != NULL && ippGetCount(attr) >= 2) {
+      bk = ippGetInteger(attr, 0);
+      cl = ippGetInteger(attr, 1);
+    }
+    ippDelete(resp);
+  }
+  httpClose(http);
+  if (bk < 0 || cl < 0) {
+    fputs("DEBUG: No ink levels recorded yet; they are read at the end of a print job\n", stderr);
+    return;
+  }
+  fputs("ATTR: marker-names=Black,Color\n", stderr);
+  fputs("ATTR: marker-colors=#000000,#00FFFF#FF00FF#FFFF00\n", stderr);
+  fputs("ATTR: marker-types=ink-cartridge,ink-cartridge\n", stderr);
+  fprintf(stderr, "ATTR: marker-levels=%d,%d\n", bk, cl);
+  fputs("ATTR: marker-low-levels=10,10\n", stderr);
+  fprintf(stderr, "DEBUG: Reported recorded ink levels: black %d%%, colour %d%%\n", bk, cl);
+}
+
+/* Handles CUPS command files; only "ReportLevels" is supported (see above). */
 static int run_commands(int fd)
 {
   FILE *f = fdopen(fd, "r");
@@ -266,10 +309,7 @@ static int run_commands(int fd)
        expects is unknown, and guessed ones left it waiting for data. Use the printer's
        RESUME/CANCEL button instead. */
     if (!strncasecmp(line, "ReportLevels", 12)) {
-      /* Deliberately a no-op: a status request outside a print job leaves the iP100 waiting
-         for a job (power light flashing) until it is switched off. Ink levels are reported
-         at the end of every print job instead. (PPDs from 1.1/1.2 advertised this command.) */
-      fputs("DEBUG: ReportLevels ignored; ink levels are updated after each print job\n", stderr);
+      report_cached_levels(); /* never talks to the printer */
     } else {
       fprintf(stderr, "WARNING: Unsupported command \"%s\"\n", line);
       ok = 0;

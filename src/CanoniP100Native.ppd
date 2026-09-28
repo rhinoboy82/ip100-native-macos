@@ -1,6 +1,6 @@
 *PPD-Adobe: "4.3"
 *FormatVersion: "4.3"
-*FileVersion: "1.2.0"
+*FileVersion: "1.2.1"
 *LanguageVersion: English
 *LanguageEncoding: ISOLatin1
 *PCFileName: "IP100NAT.PPD"
@@ -24,6 +24,7 @@
 *DefaultOutputOrder: Reverse
 *cupsFilter2: "application/vnd.cups-raster application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
 *cupsFilter2: "application/vnd.cups-command application/vnd.cups-raw 0 /Library/Printers/iP100Native/rastertoip100"
+*cupsCommands: "ReportLevels"
 *cupsLanguages: "en"
 
 *OpenUI *ColorModel/Color Mode: PickOne

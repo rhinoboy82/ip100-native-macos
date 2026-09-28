@@ -1,4 +1,4 @@
-VERSION = 1.2.0
+VERSION = 1.2.1
 CFLAGS  = -O2 -Wall -Wextra -Wno-deprecated-declarations -mmacosx-version-min=11.0 -arch arm64 -arch x86_64
 
 build/rastertoip100: src/rastertoip100.c $(wildcard src/ip100_*_lut.h)
